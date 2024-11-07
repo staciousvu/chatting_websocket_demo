@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Chat Room</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        .message-container {
+            display: flex;
+            margin: 5px 0;
+        }
+
+        .message {
+            padding: 10px;
+            border-radius: 10px;
+            max-width: 60%;
+        }
+
+        .my-message-container {
+            justify-content: flex-end; /* Đẩy tin nhắn của bạn về bên phải */
+        }
+
+        .my-message {
+            background-color: #dcf8c6; /* Màu nền cho tin nhắn của bạn */
+            text-align: right; /* Căn chữ sang phải */
+        }
+
+        .other-message-container {
+            justify-content: flex-start; /* Đẩy tin nhắn của người khác về bên trái */
+        }
+
+        .other-message {
+            background-color: #f1f0f0; /* Màu nền cho tin nhắn của người khác */
+            text-align: left; /* Căn chữ sang trái */
+        }
+
+        /* CSS cho thông báo join/leave */
+        .notification {
+            text-align: center;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+
+        .join-notification {
+            background-color: #d4edda; /* Màu nền xanh cho thông báo join */
+            color: #155724;
+        }
+
+        .leave-notification {
+            background-color: #f8d7da; /* Màu nền đỏ cho thông báo leave */
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="row justify-content-center mt-5">
+        <div class="col-md-6 text-center">
+            <h2>Join Chat Room</h2>
+            <form id="joinForm" class="form-inline">
+                <input type="text" id="username" class="form-control mb-2 mr-sm-2" placeholder="Enter your name" required>
+                <input type="text" id="room" class="form-control mb-2 mr-sm-2" placeholder="Enter room code" required>
+                <button type="submit" class="btn btn-primary mb-2">Join</button>
+            </form>
+        </div>
+    </div>
+    <div id="chatArea" class="row justify-content-center mt-3" style="display: none;">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">Chat Room: <span id="roomName"></span></div>
+                <div class="card-body" id="messageArea" style="max-height: 400px; overflow-y: auto;"></div>
+                <div class="card-footer">
+                    <form id="messageForm" class="form-inline">
+                        <input type="text" id="message" class="form-control mr-sm-2" placeholder="Type your message" required>
+                        <button type="submit" class="btn btn-success">Send</button>
+                        <button type="button" class="btn btn-danger ml-2" id="leaveButton">Leave</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let stompClient = null;
+    let username = null;
+    let room = null;
+
+    function connect(event) {
+        username = document.getElementById('username').value.trim();
+        room = document.getElementById('room').value.trim();
+        document.getElementById('roomName').textContent = room;
+
+        const socket = new SockJS('/chat-realtime');
+        stompClient = Stomp.over(socket);
+
+        stompClient.connect({}, function () {
+            document.getElementById('chatArea').style.display = 'block';
+            document.getElementById('joinForm').style.display = 'none';
+
+            stompClient.subscribe('/topic/public', function (messageOutput) {
+                showMessage(JSON.parse(messageOutput.body));
+            });
+
+            stompClient.send("/app/chat.addUser", {}, JSON.stringify({sender: username, type: 'JOIN'}));
+        });
+
+        event.preventDefault();
+    }
+
+    function sendMessage(event) {
+        const messageContent = document.getElementById('message').value.trim();
+        if (messageContent && stompClient) {
+            const chatMessage = {
+                sender: username,
+                content: messageContent,
+                type: 'CHAT'
+            };
+            stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(chatMessage));
+            document.getElementById('message').value = '';
+        }
+        event.preventDefault();
+    }
+
+    function leaveChat() {
+        if (stompClient) {
+            const chatMessage = {
+                sender: username,
+                type: 'LEAVE'
+            };
+            stompClient.send("/app/chat.leaveUser", {}, JSON.stringify(chatMessage));
+            stompClient.disconnect();
+
+            document.getElementById('chatArea').style.display = 'none';
+            document.getElementById('joinForm').style.display = 'block';
+            document.getElementById('username').value = '';
+            document.getElementById('room').value = '';
+        }
+    }
+
+    function showMessage(message) {
+        const messageArea = document.getElementById('messageArea');
+        const messageContainer = document.createElement('div');
+
+        if (message.type === 'JOIN' || message.type === 'LEAVE') {
+            messageContainer.classList.add('notification', message.type === 'JOIN' ? 'join-notification' : 'leave-notification');
+            messageContainer.textContent = message.sender + (message.type === 'JOIN' ? ' has joined the chat' : ' has left the chat');
+        } else {
+            if (message.sender === username) {
+                messageContainer.classList.add('message-container', 'my-message-container');
+            } else {
+                messageContainer.classList.add('message-container', 'other-message-container');
+            }
+
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', message.sender === username ? 'my-message' : 'other-message');
+
+            const textElement = document.createElement('p');
+            textElement.textContent = message.sender + ": " + message.content;
+            messageElement.appendChild(textElement);
+            messageContainer.appendChild(messageElement);
+        }
+
+        messageArea.appendChild(messageContainer);
+        messageArea.scrollTop = messageArea.scrollHeight;
+    }
+
+    document.getElementById('joinForm').addEventListener('submit', connect, true);
+    document.getElementById('messageForm').addEventListener('submit', sendMessage, true);
+    document.getElementById('leaveButton').addEventListener('click', leaveChat, true);
+</script>
+</body>
+</html>
